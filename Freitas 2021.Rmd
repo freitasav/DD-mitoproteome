@@ -9,29 +9,29 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 ```{r, warning=FALSE,message=FALSE}
 library(tidyverse)
-library(mixtools)
-library(nnet)
 library(gplots)
+library(mixR)
+library(nnet)
 library(rcompanion)
 ```
 ```{r, warning=FALSE,message=FALSE}
 #Input files
 RERdata <- read_csv("RERvalues.csv")
+RERs <- as.vector(RERdata$RER)
 validation <- read_csv("validation.csv")
 rnaseq <- read.csv("rnaseq.csv")
 ```
-Mathematical modeling via an Expectation-maximization (EM) algorithm
+Two-component mixture modeling, Related to Figure 2
 ```{r}
+#Identify best two-component (n-comp) mixture model
+mixR::select(RERs, ncomp = 2)
 #Estimate mixture values for two-component mixture model
-##x = Input data, mu = Mean, sigma = Standard deviation, lam = Mixture weight
-plot_mix_comps <- function(x, mu, sigma, lam) {lam * dnorm(x, mu, sigma)}
-set.seed(1)
-RER <- RERdata$RER
-mixmdl <- normalmixEM(RER, k = 2, maxit=10000)
-#Calculation of relative enrichment ratio (RER) cutoff (four times the standard deviation of curve 1 plus the mean of curve 1) for Figure 2d
-mixmdl$mu[1]+4*mixmdl$sigma[1]
+##mu = Mean, sd = Standard deviation, pi = Mixture weight
+prob <- mixfit(RERs, family = "normal", ncomp = 2)
+#Generate table of posterior probabilities of model to generate relative enrichment ratio (RER) cutoff 
+post.df <- as.data.frame(cbind(x = prob$comp.prob))
 ```
-Microscopy validation
+Microscopy validation, Related to Figure 3
 ```{r}
 #Statistical analysis for Figure 3b
 neworder <- c("M","C","CN","ER","P" )
@@ -60,20 +60,6 @@ val_ordered <- val_ordered %>% filter(!(Localization == "Excluded" & RER > out_e
 val_ordered$Localization <- as.factor(val_ordered$Localization)
 ```
 ```{r}
-#Multinomial logistic regression and computation of p-values
-test <- multinom(Localization ~ RER, data = val_ordered, Hess = TRUE)
-summary(test)
-z <- summary(test)$coefficients/summary(test)$standard.errors
-p <- (1 - pnorm(abs(z), 0, 1)) * 2
-p
-#Test whether overall model is significant using McFadden's pseudo-R square
-test0 <- multinom(Localization ~ 1, data = val_ordered)
-test.negtwo.loglik <- test$deviance
-test0.negtwo.loglik <- test0$deviance
-out <- as.numeric(1 - test.negtwo.loglik/test0.negtwo.loglik)
-out
-```
-```{r}
 #Plot predicted probabilities for outcome levels using individual glms for Figure 3c
 pp_mito <- val_ordered %>% filter(Localization != c("Partial mitochondrial")) %>% mutate(Localization = recode(Localization, "Mitochondrial" = "1", "Excluded" = "0"))
 pp_partial <- val_ordered %>% filter(Localization != c("Mitochondrial")) %>% mutate(Localization = recode(Localization, "Partial Mitochondrial" = "1", "Excluded" = "0"))
@@ -97,26 +83,27 @@ new_c2 <- cbind(new_c1, predict(mod_combined, newdata = new_c1, type = "link", s
 new_c3 <- within(new_c2, {PredictedProb_c <- plogis(fit) 
 LL_c <- plogis(fit - (1.96 * se.fit))
 UL_c <- plogis(fit + (1.96 * se.fit))})
-ggplot()+ geom_line(data = new_m3, aes(x = RER, y = PredictedProb_m), color = "#40ff00")+ geom_line(data = new_p3, aes(x = RER, y = PredictedProb_p), color = "gray")+ geom_line(data = new_c3, aes(x = RER, y = PredictedProb_c), color = "blue")+ geom_ribbon(data = new_m3, xmin=0, xmax=1.5, aes(x = RER, ymin = LL_m, ymax = UL_m), alpha = 0.2, fill = "#40ff00")+ geom_ribbon(data = new_p3, xmin=0, xmax=1.5, aes(x= RER, ymin = LL_p, ymax = UL_p), alpha = 0.2, fill = "gray")+ geom_ribbon(data = new_c3, xmin=0, xmax=1.5, aes(x= RER, ymin = LL_c, ymax = UL_c), alpha = 0.2, fill = "blue")+ labs(y = "Predicted Probability", x = "RER")+ geom_vline(xintercept = 0.343, lty = 2)+ scale_x_continuous(limits = c(0,1.5))+ scale_y_continuous(limits = c(0,1))+ theme(panel.background = element_blank()) 
-##Examine significance of each model using McFadden's pseudo-R square
+ggplot()+ geom_line(data = new_m3, aes(x = RER, y = PredictedProb_m), color = "#40ff00")+ geom_line(data = new_p3, aes(x = RER, y = PredictedProb_p), color = "gray")+ geom_line(data = new_c3, aes(x = RER, y = PredictedProb_c), color = "blue")+ geom_ribbon(data = new_m3, xmin=0, xmax=1.5, aes(x = RER, ymin = LL_m, ymax = UL_m), alpha = 0.2, fill = "#40ff00")+ geom_ribbon(data = new_p3, xmin=0, xmax=1.5, aes(x= RER, ymin = LL_p, ymax = UL_p), alpha = 0.2, fill = "gray")+ geom_ribbon(data = new_c3, xmin=0, xmax=1.5, aes(x= RER, ymin = LL_c, ymax = UL_c), alpha = 0.2, fill = "blue")+ labs(y = "Predicted Probability", x = "RER")+ geom_vline(xintercept = 0.392, lty = 2)+ scale_x_continuous(limits = c(0,1.5))+ scale_y_continuous(limits = c(0,1))+ theme(panel.background = element_blank()) 
+##Examine significance of each model using McFadden's pseudo R-square
 nagelkerke(mod_mito)
 nagelkerke(mod_partial)
 nagelkerke(mod_combined)
-##Probability of mito localization at RER cutoff
-pp <- data.frame(RER = 0.343)
+##Probability of mito localization at RER cutoff, only model with highest pseudo R-square value (computed above) is reported 
+pp <- data.frame(RER = 0.392)
 predict(mod_mito, pp, type="response")
 predict(mod_partial, pp, type="response")
 predict(mod_combined, pp, type="response")
 ```
-
-RNA Sequencing analysis
+RNA Sequencing analysis, Related to Figure 4
 ```{r, warning=FALSE}
 #Scale data to mean 0 and standard deviation 1
 scaledata <- rnaseq %>% mutate_at(c("t0", "t4", "t8", "t12", "t16", "t20", "t24"), ~(scale(.) %>% as.vector))
 scaledata_m <- data.matrix(scaledata[2:8]) 
 rownames(scaledata_m) <- paste0(rnaseq$Entry)
-#Visualize data with heatmap
+#Visualize data with heatmap (figure 5a)
+par(mar=c(1,1,1,1))
 overallheatmap <- heatmap.2(scaledata_m, Colv = FALSE, reorderfun=function(d,w) reorder(d, w, agglo.FUN=mean),
   distfun=function(scaledata_m) dist(scaledata_m, method="euclidean"),
   hclustfun=function(scaledata_m) hclust(scaledata_m, method="ward.D2"), scale="row", col="bluered",trace="none",labRow=FALSE)
+overallheatmap
 ```
